@@ -1,0 +1,27 @@
+{
+    "name": "elendev/checkout-bundle",
+    "description": "Provide simple checkout utilities for paypal",
+    "keywords": ["checkout","paypal"],
+    "homepage": "http://blog.elendev.com",
+    "type": "symfony-bundle",
+    "license": "Apache2",
+    "authors": [
+        {
+            "name": "Jonas Renaudot",
+            "email": "blackcharly@elendev.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {
+        "symfony/framework-bundle": "2.1.*",
+    },
+    "require-dev": {
+        "sensio/framework-extra-bundle": "*",
+        "symfony/class-loader": "*",
+        "symfony/yaml": "*",
+    },
+    "autoload": {
+        "psr-0": { "Elendev\\CheckoutBundle": "" }
+    },
+    "target-dir": "Elendev/CheckoutBundle"
+}
