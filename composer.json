@@ -13,12 +13,12 @@
     ],
     "minimum-stability": "dev",
     "require": {
-        "symfony/framework-bundle": "2.1.*",
+        "symfony/framework-bundle": "2.1.*"
     },
     "require-dev": {
         "sensio/framework-extra-bundle": "*",
         "symfony/class-loader": "*",
-        "symfony/yaml": "*",
+        "symfony/yaml": "*"
     },
     "autoload": {
         "psr-0": { "Elendev\\CheckoutBundle": "" }
