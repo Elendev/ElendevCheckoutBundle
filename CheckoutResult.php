@@ -26,9 +26,10 @@ use Elendev\CheckoutBundle\Command\Custommer;
 class CheckoutResult {
     
     const STATUS_SUCCESS = 0;
-    const STATUS_IN_PROGRESS = 1;
-    const STATUS_CANCELED = 2;
-    const STATUS_ERROR = 3;
+    const STATUS_PENDING = 1;
+    const STATUS_IN_PROGRESS = 2;
+    const STATUS_CANCELED = 3;
+    const STATUS_ERROR = 4;
     
     //custommer informations, available when command is marked 'success'
     private $custommer;

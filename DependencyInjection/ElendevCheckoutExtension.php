@@ -44,7 +44,10 @@ class ElendevCheckoutExtension extends Extension {
         
         //$container->setAlias("elendev.checkout.provided_process_handler", $config["process_handler_id"]);
         
-        
+        //OrderManagerService
+        if(isset($config["order_manager"])){
+        	$container->setAlias("elendev.checkout.order_manager", $config["order_manager"]);
+        }
         
         if(isset($config["paypal"])){
             $container->setParameter("elendev.checkout.paypal.enabled", true);

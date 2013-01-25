@@ -17,12 +17,26 @@
 
 namespace Elendev\CheckoutBundle\PaypalAPI;
 
+use Monolog\Logger;
+
+//TODO : ADD IT IN PATH SYMFONY !
+$path = __DIR__ . "/merchant-sdk/lib";
+set_include_path(get_include_path() . PATH_SEPARATOR . $path);
+include("services/PayPalAPIInterfaceService/PayPalAPIInterfaceServiceService.php");
+
+use Symfony\Bundle\FrameworkBundle\Routing\Router;
+
+use Elendev\CheckoutBundle\Command\Custommer;
+
+use Elendev\CheckoutBundle\Command\Item;
+
 use Elendev\CheckoutBundle\CheckoutService;
 use Elendev\CheckoutBundle\Command\Command;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Elendev\CheckoutBundle\CheckoutResult;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+
 /**
  * Allow to do checkout through paypal
  *
@@ -35,8 +49,6 @@ class PaypalCheckoutService extends CheckoutService {
     private $username;
     private $password;
     private $signature;
-
-    private $version = "65.3";
 
     private $payerId;
 
@@ -57,7 +69,10 @@ class PaypalCheckoutService extends CheckoutService {
     
     private $session;
     
+    private $router;
     
+    /** @var \Symfony\Bridge\Monolog\Logger */
+    private $logger;
     
     /** 
      * Paypal codes :
@@ -77,19 +92,19 @@ class PaypalCheckoutService extends CheckoutService {
     private $brandName = null;
     
     
-
-    
-    
     /**
      * Receive the request object at initialization
      * @param ContainerInterface container
      */
-    public function __construct(ContainerInterface $container, $username, $password, $signature, $useSandbox){
+    public function __construct(ContainerInterface $container, Router $router, $username, $password, $signature, $useSandbox){
         $this->container = $container;
         
         $this->username = $username;
         $this->password = $password;
         $this->signature = $signature;
+        
+        $this->router = $router;
+        $this->logger = $container->get("logger");
         
         $this->session = $container->get("session");
         
@@ -98,12 +113,13 @@ class PaypalCheckoutService extends CheckoutService {
         $this->cancelUrl = $this->currentUrl . "?status=cancel";
         $this->returnUrl = $this->currentUrl . "?status=continue";
         
-        
         if($useSandbox){
-            $this->endpoint = "https://api-3t.sandbox.paypal.com/nvp";
+            //$this->endpoint = "https://api-3t.sandbox.paypal.com/2.0";
+            define('PP_CONFIG_PATH', __DIR__ . '/config/sandbox');
             $this->paypalURL = "https://www.sandbox.paypal.com/webscr&cmd=_express-checkout&token=";
         }else{
-            $this->endpoint = "https://api-3t.paypal.com/nvp";
+            //$this->endpoint = "https://api-3t.paypal.com/2.0";
+        	define('PP_CONFIG_PATH', __DIR__ . '/config/production');
             $this->paypalURL = "https://www.paypal.com/webscr&cmd=_express-checkout&token=";
         }
     }
@@ -130,57 +146,85 @@ class PaypalCheckoutService extends CheckoutService {
      * @return CheckoutResult : result of checkout operations
      */
     public function doCheckout(Command $command){
-        
-        //use container request
-        
+    	
         $token = $this->session->get("checkout.payment.token");
         
         $result = new CheckoutResult();
         
+        $paypalService = new \PayPalAPIInterfaceServiceService();
+        
+        
         if(!$token){
-            $response = $this->setExpressCheckoutRequest($command);
-            
-            if($response["ACK"] == "Success"){
-                $this->session->set("checkout.payment.token", $response["TOKEN"]);
-                
-                $result->setStatus(CheckoutResult::STATUS_IN_PROGRESS);
-                
-                $result->setHttpResponse(new RedirectResponse($this->paypalURL . $response["TOKEN"]));
-                
-            }else{
-                $result->setStatus(CheckoutResult::STATUS_ERROR);
-                $result->setCommandData($response);
+            //$response = $this->setExpressCheckoutRequest($command);
+            try{
+            	$response = $paypalService->SetExpressCheckout($this->getSetExpressCheckoutRequest($command), $this->getAPICredentials());
+            	
+            	$result->setCommandData($response);
+            	
+            	if($response->Ack =='Success'){
+            		$this->session->set("checkout.payment.token", $response->Token);
+            	
+            		$result->setStatus(CheckoutResult::STATUS_IN_PROGRESS);
+            	
+            		$result->setHttpResponse(new RedirectResponse($this->paypalURL . $response->Token));
+            	}else{
+            		$result->setStatus(CheckoutResult::STATUS_ERROR); //TODO Check this !
+            	}
+            	
+            }catch(\Exception $e){
+            	$this->logger->err('Command PAYPAL setExpressCheckout error : ' . $e->getCode() . " - " . $e->getMessage());
+            	$this->session->remove("checkout.payment.token");
+            	$result->setStatus(CheckoutResult::STATUS_ERROR);
+            	throw $e;
             }
             
-        }else{
-            //print_
             
-            //print_r($this->container->get("request")->request);
-            //die("this is the end : " . $this->container->);
+        }else{
             
             if($this->container->get("request")->query->get("status") == "continue"){
                 
                 $token = $this->session->get("checkout.payment.token");
                 
-                $detailResponse = $this->getExpressCheckoutDetail($command, $token);
+                $ecDetails = null;
+                $ecPayment = null;
                 
-                if($detailResponse["ACK"] != "Success"){
-                    $result->setCommandData($detailResponse);
-                    $result->setStatus(CheckoutResult::STATUS_ERROR);
-                    return $result;
-                }
-                
-                $response = $this->doExpressCheckoutPayment($command, $token, $detailResponse["PAYERID"]);
-                
-                //merge to keep a trace of every steps
-                $finalResponse = array_merge($detailResponse, $response);
-                
-                $result->setCommandData($finalResponse);
-                
-                if($response["ACK"] != "Success"){
-                    $result->setStatus(CheckoutResult::STATUS_ERROR);
-                }else{
-                    $result->setStatus(CheckoutResult::STATUS_SUCCESS);
+                try{
+                	$ecDetails = $paypalService->GetExpressCheckoutDetails($this->getGetExpressCheckoutDetail($token), $this->getAPICredentials());
+                	
+                	if($ecDetails->Ack == 'Success'){
+                		
+                		$ecPayment = $paypalService->DoExpressCheckoutPayment($this->getDoExpressCheckoutRequest($command, $ecDetails->GetExpressCheckoutDetailsResponseDetails), $this->getAPICredentials());
+                		
+                		if($ecPayment->Ack == 'Success'){
+                			$paymentInfo = $ecPayment->DoExpressCheckoutPaymentResponseDetails->PaymentInfo;
+                			if($paymentInfo && count($paymentInfo) > 0){
+                				$paymentStatus = $paymentInfo[0]->PaymentStatus;
+                				 
+                				if($paymentStatus == 'Completed' || $paymentStatus == 'Completed-Funds-Held'){
+                					$result->setStatus(CheckoutResult::STATUS_SUCCESS);
+                				}else if($paymentStatus == 'In-Progress' || $paymentStatus == 'Partially-Refunded' || $paymentStatus == 'Pending' || $paymentStatus == 'Processed'){
+                					$result->setStatus(CheckoutResult::STATUS_PENDING);
+                					$result->setCommandData($paymentInfo[0]->PendingReason);
+                				}else{
+                					$result->setStatus(CheckoutResult::STATUS_ERROR);
+                				}
+                			}else{ //simple success : need to check after if ok
+                				$result->setStatus(CheckoutResult::STATUS_PENDING);
+                			}
+                			
+                		}else{
+                			$this->logger->err('Command PAYPAL doExpressCheckoutPayment [' . $token . '] ack not success : ' . $ecPayment->Ack , array(json_encode($ecPayment)));
+                			$result->setStatus(CheckoutResult::STATUS_ERROR);
+                		}
+                	}else{
+                		$this->logger->err('Command PAYPAL getExpressCheckoutDetails [' . $token . '] ack not success : ' . $ecDetails->Ack , array(json_encode($ecDetails)));
+                		$result->setStatus(CheckoutResult::STATUS_ERROR); 
+                	}
+                }catch(\Exception $e){
+                	$this->session->remove("checkout.payment.token");
+                	$this->logger->err('Command PAYPAL [' . $token . '] get/do express checkout payment error : ' . $e->getCode() . " - " . $e->getMessage(), array("ecDetails" => json_encode($ecDetails), "ecPayment" => json_encode($ecPayment)));
+                	$result->setCommandData($e->getCode() . " - " . $e->getMessage());
+                	$result->setStatus(CheckoutResult::STATUS_ERROR);
                 }
                 
                 $this->session->remove("checkout.payment.token");
@@ -195,207 +239,153 @@ class PaypalCheckoutService extends CheckoutService {
         return $result;
     }
     
-    
-    
     /**
-     * First step : go to paypal and get a valid token
-     * @param \Shop\CommandBundle\Entity\Command $command
-     * @return Token
-     */
-    private function setExpressCheckoutRequest(Command $command) {
-
-        $params = array(
-            "RETURNURL" => $this->returnUrl,
-            "CANCELURL" => $this->cancelUrl,
-            "REQCONFIRMSHIPPING" => 0,
-            "NOSHIPPING" => 1, // 0 : display shipping, 2 : obtain shipping from paypal account
-            "ADDROVERRIDE" => 0,
-        );
-        
-        
-        //add personalization parameters
-        if($this->pageStyle){
-            $params["PAGESTYLE"] = $this->pageStyle;
-        }
-        if($this->headerImage){
-            $params["HDRIMG"] = $this->headerImage;
-        }
-        if($this->borderColor){
-            $params["HDRBORDERCOLOR"] = $this->borderColor;
-        }
-        if($this->headerBackgroundColor){
-            $params["HDRBACKCOLOR"] = $this->headerBackgroundColor;
-        }
-        if($this->paymentPageBackgroundColor){
-            $params["PAYFLOWCOLOR"] = $this->paymentPageBackgroundColor;
-        }
-        if($this->brandName){
-            $params["BRANDNAME"] = $this->brandName;
-        }
-        
-        
-        
-        $this->setCommandAddressParameters($command, $params);
-        $this->setCommandDetailsParameters($command, $params);
-        
-        $response = $this->getMethodResponse("SetExpressCheckout", $params);
-
-        return $response;
-    }
-    
-    /**
-     * Step 2
-     * Modify command according to the new details (address, amount, ...)
-     * @param $command
-     * @param <type> $token
-     * @return the associed paypalPayment
-     */
-    public function getExpressCheckoutDetail(Command $command, $token) {
-        $params = array("TOKEN" => $token);//$this->sessionService->getValue("token");
-
-        return $this->getMethodResponse("GetExpressCheckoutDetails", $params);
-    }
-    
-    /**
-     * last step : validate payment
-     * @param \Shop\CommandBundle\Entity\Command $command
-     * @return Token
-     */
-    private function doExpressCheckoutPayment(Command $command, $token, $payerId) {
-
-        $params = array(
-            "TOKEN" => $token,
-            "PAYMENTACTION" => "Sale",
-            "PAYERID" => $payerId,
-        );
-        
-        $this->setCommandAddressParameters($command, $params);
-        $this->setCommandDetailsParameters($command, $params);
-        
-        $response = $this->getMethodResponse("DoExpressCheckoutPayment", $params);
-        
-        if(strtolower($response["ACK"]) != "success") {
-            echo "<hr>";
-            print_r($params);
-            echo "<hr>";
-            print_r($response);
-            die();
-        }
-
-        return $response;
-    }
-    
-    
-    /**
-     * Return URL content as a string
-     * @param <type> $url
-     * @param <type> $params
-     */
-    private function getMethodResponse($method, $params = null) {
-        $ch = curl_init($this->endpoint);
-        curl_setopt($ch, CURLOPT_VERBOSE, 1);
-
-        //turning off the server and peer verification(TrustManager Concept).
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);
-
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
-        curl_setopt($ch, CURLOPT_POST, 1);
-
-
-        $params["PWD"] = $this->password;
-        $params["USER"] = $this->username;
-        $params["SIGNATURE"] = $this->signature;
-        $params["VERSION"] = $this->version;
-        $params["method"] = $method;
-
-        $resultStringArray = array();
-
-        foreach($params as $key => $value) {
-            $resultStringArray[] = urlencode($key) . "=" . urlencode($value);
-        }
-
-        $paramString = implode("&", $resultStringArray);
-
-        curl_setopt($ch, \CURLOPT_POSTFIELDS, $paramString);
-
-        $response = curl_exec($ch);
-
-        return $this->responseToArray($response);
-
-    }
-    
-    /**
-     * set address details
+     * 
      * @param Command $command
-     * @param type $params
-     * @param type $commandNumber 
+     * @return \SetExpressCheckoutReq
      */
-    private function setCommandAddressParameters(Command $command, &$params, $commandNumber = 0){
-        
-        $customer = $command->getCustommer();
-        
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTONAME"] = substr($customer->getFirstName() . " " . $customer->getLastName(), 0, 32);
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOSTREET"] = substr($customer->getStreet(), 0, 100);
-        
-        if($customer->getStreet() != null && strlen($customer->getStreet()) > 0){
-            $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOSTREET2"] = substr($customer->getStreet2(), 0, 100);
-        }
-        
-        
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOCITY"] = substr($customer->getCity(), 0, 40);
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOSTATE"] = substr($customer->getState(), 0, 40);
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOZIP"] = substr($customer->getZipCode(), 0, 20);
-        $params["PAYMENTREQUEST_".$commandNumber."_SHIPTOCOUNTRYCODE"] = substr($customer->getCountryCode(), 0, 2);
-        
+    public function getSetExpressCheckoutRequest(Command $command){
+    	$ecReqDetail = new \SetExpressCheckoutRequestDetailsType();
+    	
+    	$ecReqDetail->PaymentDetails[0] = $this->getPaymentDetailType($command);
+    	$ecReqDetail->ReturnURL = $this->returnUrl;
+    	$ecReqDetail->CancelURL = $this->cancelUrl;
+    	
+    	$ecReqDetail->NoShipping = true;
+    	$ecReqDetail->AddressOverride = false;
+    	$ecReqDetail->ReqConfirmShipping = false;
+    	$ecReqDetail->AllowNote = false;
+    	
+    	$ecReqDetail->cppheaderimage = $this->headerImage;
+    	$ecReqDetail->BrandName = $this->brandName;
+    	$ecReqDetail->PageStyle = $this->pageStyle;
+    	$ecReqDetail->cppheaderbordercolor = $this->borderColor;
+    	$ecReqDetail->cppheaderbackcolor = $this->headerBackgroundColor;
+    	$ecReqDetail->cpppayflowcolor = $this->paymentPageBackgroundColor;
+    	
+    	$setECReqType = new \SetExpressCheckoutRequestType();
+    	$setECReqType->SetExpressCheckoutRequestDetails = $ecReqDetail;
+    	$setECReq = new \SetExpressCheckoutReq();
+    	$setECReq->SetExpressCheckoutRequest = $setECReqType;
+    	
+    	return $setECReq;
     }
     
     /**
-     * Add every objects
+     * 
+     * @param unknown $token
+     * @return \GetExpressCheckoutDetailsReq
+     */
+    public function getGetExpressCheckoutDetail($token){
+    	
+    	$ecReqType = new \GetExpressCheckoutDetailsRequestType();
+    	$ecReqType->Token = $token;
+    	
+    	$ecReq = new \GetExpressCheckoutDetailsReq();
+    	$ecReq->GetExpressCheckoutDetailsRequest = $ecReqType;
+    	
+    	return $ecReq;
+    }
+    
+    /**
+     * 
      * @param Command $command
-     * @param type $params
+     * return \DoExpressCheckoutPaymentReq
      */
-    private function setCommandDetailsParameters(Command $command, &$params, $commandNumber = 0){
-        
-        $params["PAYMENTREQUEST_".$commandNumber."_SELLERPAYPALACCOUNTID"] = $this->payerId;
-        
-        $params["PAYMENTREQUEST_" . $commandNumber . "_AMT"] = $command->getTotalAmount();
-        $params["PAYMENTREQUEST_" . $commandNumber . "_CURRENCYCODE"] = $this->currency;
-        $params["PAYMENTREQUEST_" . $commandNumber . "_ITEMAMT"] = $command->getItemsAmount();
-        $params["PAYMENTREQUEST_" . $commandNumber . "_SHIPPINGAMT"] = $command->getShippingAmount();
-        $params["PAYMENTREQUEST_" . $commandNumber . "_SHIPDISCAMT"] = $command->getShippingDiscount();
-        
-        $params["PAYMENTREQUEST_" . $commandNumber . "_PAYMENTACTION"] = "Sale";
-        
-        
-        $count = 0;
-        foreach($command->getItems() as $item){
-            
-            $params["L_PAYMENTREQUEST_" . $commandNumber . "_NAME" . $count] = substr($item->getName(), 0, 127);
-            $params["L_PAYMENTREQUEST_" . $commandNumber . "_DESC" . $count] = substr($item->getDescription(), 0, 127);
-            $params["L_PAYMENTREQUEST_" . $commandNumber . "_AMT" . $count] = $item->getAmount();
-            $params["L_PAYMENTREQUEST_" . $commandNumber . "_QTY" . $count] = $item->getQuantity();
-            
-            $count ++;
-        }
-        
+    public function getDoExpressCheckoutRequest(Command $command, \GetExpressCheckoutDetailsResponseDetailsType $ecDetails){
+    	$ecReqDetail = new \DoExpressCheckoutPaymentRequestDetailsType();
+    	
+    	$ecReqDetail->PayerID = $ecDetails->PayerInfo->PayerID;
+    	//$ecReqDetail->PaymentAction = $ecDetails->PaymentDetails->PaymentAction; //TODO Here problem !!!!
+    	$ecReqDetail->PaymentDetails = $ecDetails->PaymentDetails;
+    	$ecReqDetail->Token = $ecDetails->Token;
+    	
+    	$ecReqType = new \DoExpressCheckoutPaymentRequestType();
+    	$ecReqType->DoExpressCheckoutPaymentRequestDetails = $ecReqDetail;
+    	$ecReq = new \DoExpressCheckoutPaymentReq();
+    	$ecReq->DoExpressCheckoutPaymentRequest = $ecReqType;
+    	
+    	return $ecReq;
     }
     
     /**
-     * Change the response to an associative array
-     * @param type $response
-     * @return type 
+     * 
+     * @param Command $command
+     * @return \PaymentDetailsType
      */
-    private function responseToArray($response) {
-        $responseArray = explode("&", $response);
-
-        $associativeArrayResponse = array();
-
-        foreach($responseArray as $token) {
-            $tokens = explode("=", $token);
-            $associativeArrayResponse[$tokens[0]] = urldecode($tokens[1]);
-        }
-        return $associativeArrayResponse;
+    public function getPaymentDetailType(Command $command){
+    	$paymentDetail = new \PaymentDetailsType();
+    	
+    	$paymentDetail->ShipToAddress = $this->getAddressType($command->getCustommer());
+    	
+    	$paymentDetail->ItemTotal = new \BasicAmountType($this->currency, $command->getItemsAmount());
+    	$paymentDetail->ShippingTotal = new \BasicAmountType($this->currency, $command->getShippingAmount());
+    	$paymentDetail->ShippingDiscount = new \BasicAmountType($this->currency, $command->getShippingDiscount());
+    	$paymentDetail->OrderTotal = new \BasicAmountType($this->currency, $command->getTotalAmount());
+    	
+    	$paymentDetail->PaymentAction = "Sale";
+    	$paymentDetail->SellerDetails = $this->getSellerDetail();
+    	
+    	foreach($command->getItems() as $item){
+    		$paymentDetail->PaymentDetailsItem[] = $this->getItemDetail($item);
+    	}
+    	
+    	$paymentDetail->NotifyURL = $this->router->generate("elendev.checkout.paypal.ipn", array(), true);
+    	
+    	return $paymentDetail;
+    }
+    
+    /**
+     * @param Custommer $custommer
+     * @return \AddressType
+     */
+    public function getAddressType(Custommer $custommer){
+    	$address = new \AddressType();
+    	
+    	$address->CityName = $custommer->getCity();
+    	$address->Name = $custommer->getFirstName() . " " . $custommer->getLastName();
+    	$address->Street1 = $custommer->getStreet();
+    	$address->Street2 = $custommer->getStreet2();
+    	$address->PostalCode = $custommer->getZipCode();
+    	$address->Country = $custommer->getCountryCode();
+    	$address->StateOrProvince = $custommer->getState();
+    	
+    	return $address;
+    }
+    
+    /**
+     * @return \PaymentDetailsItemType
+     */
+    public function getItemDetail(Item $item){
+    	$paypalItem = new \PaymentDetailsItemType();
+    	
+    	$amount = new \BasicAmountType();
+    	$amount->value = $item->getAmount();
+    	$amount->currencyID = $this->currency;
+    	
+    	$paypalItem->Name = $item->getName();
+    	$paypalItem->Description = $item->getDescription();
+    	$paypalItem->Amount = $amount;
+    	
+    	return $paypalItem;
+    }
+    
+    /**
+     * @return \SellerDetailsType
+     */
+    public function getSellerDetail(){
+    	$sellerDetailType = new \SellerDetailsType();
+    	
+    	$sellerDetailType->PayPalAccountID = $this->payerId;
+    }
+    
+    /**
+     * @return \APICredentialsType
+     */
+    public function getAPICredentials(){
+    	$apiCredentials = new \PPSignatureCredential($this->username, $this->password, $this->signature);
+    	
+    	return $apiCredentials;
     }
     
     public function setCurrency($currency){

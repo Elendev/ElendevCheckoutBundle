@@ -8,6 +8,6 @@ services:
         
     elendev.checkout.service_provider.paypal:
         class : Elendev\CheckoutBundle\PaypalAPI\PaypalCheckoutService
-        arguments : ["@service_container", %elendev.checkout.paypal.username%, %elendev.checkout.paypal.password%, %elendev.checkout.paypal.signature%, %elendev.checkout.paypal.use_sandbox%]
+        arguments : ["@service_container", "@router", %elendev.checkout.paypal.username%, %elendev.checkout.paypal.password%, %elendev.checkout.paypal.signature%, %elendev.checkout.paypal.use_sandbox%]
         tags : 
             - {name : elendev.checkout.service, id: paypal}
