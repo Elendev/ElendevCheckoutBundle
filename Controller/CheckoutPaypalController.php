@@ -2,9 +2,7 @@
 
 namespace Elendev\CheckoutBundle\Controller;
 
-$path = __DIR__ . "/../PaypalAPI/merchant-sdk/lib";
-set_include_path(get_include_path() . PATH_SEPARATOR . $path);
-require_once 'ipn/PPIPNMessage.php';
+use Elendev\CheckoutBundle\PaypalAPI\PaypalCheckoutService;
 
 use Symfony\Component\HttpFoundation\Response;
 
@@ -28,10 +26,14 @@ class CheckoutPaypalController extends Controller{
 	 * @param Request $request
 	 */
 	public function IPNAction(Request $request, $command){
+		
+		$ipnMessage = $this->get("elendev.checkout.service_provider.paypal")->getIPNMessage();
+		$validate = $ipnMessage->validate();
+		
 		$logger = $this->get("logger");
 		if(!$this->has("elendev.checkout.order_manager")){
 			$logger->err("NO PAYPAL ORDER_MANAGER");
-			return new Response();
+			return new Response("No paypal order_manager");
 		}
 		
 		$orderManager = $this->get("elendev.checkout.order_manager");
@@ -43,12 +45,12 @@ class CheckoutPaypalController extends Controller{
 		
 		//DO IPN STUFF - VALIDATE OR UNVALIDATE WITH ORDER MANAGER
 		
-		$ipnMessage = new \PPIPNMessage();
+		
 		foreach($ipnMessage->getRawData() as $key => $value) {
 			$logger->err("DATA : " . $key . " = " . $value);
 		}
 		
-		if($ipnMessage->validate()) {
+		if($validate) {
 			$logger->debug("Success: Got valid IPN data");
 			
 			$command = $orderManager->getCommand($command);
@@ -62,13 +64,15 @@ class CheckoutPaypalController extends Controller{
 		   		//do nothing
 		   	}else if($checkoutStatus == 'PaymentActionFailed'){
 		   		$orderManager->errorCommand($command);
+		   		$logger->err("PAYPAL IPN command " . $command->getId() . " PaymentActionFailed");
 	    	}
 			
 		} else {
-			$logger->error("Error: Got invalid IPN data");
+			$logger->err("Error: Got invalid IPN data");
+			return new Response("Invalid IPN data");
 		}
 		
-		return new Response();
+		return new Response("Finished correctly");
 	}
 	
 }

@@ -140,6 +140,14 @@ class PaypalCheckoutService extends CheckoutService {
         $this->paypalURL = $paypalUrl;
     }
     
+    /**
+     * Validate current IPN
+     * @return \PPIPNMessage
+     */
+    public function getIPNMessage(){
+    	require_once 'ipn/PPIPNMessage.php';
+    	return new \PPIPNMessage();
+    }
     
     /**
      * @param Command $command
