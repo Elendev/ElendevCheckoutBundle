@@ -15,5 +15,5 @@ interface OrderManagerService {
 	
 	public function validateCommand(Command $command);
 	
-	public function errorCommand(Command $command, $error);
+	public function errorCommand(Command $command, $error = null);
 }

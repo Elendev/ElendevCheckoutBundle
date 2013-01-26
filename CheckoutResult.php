@@ -40,6 +40,8 @@ class CheckoutResult {
     //current command data, available when command has 'success' status
     private $commandData;
     
+    private $token;
+    
     /**
      *
      * @var HTTPResponse response to return when status is not success ?
@@ -47,7 +49,7 @@ class CheckoutResult {
     private $httpResponse;
     
     
-    public function __construct($custommer = null, $status = CheckoutResult::STATUS_IN_PROGRESS, $commandData = null){
+    public function __construct($custommer = null, $status = CheckoutResult::STATUS_IN_PROGRESS, $commandData = null, $token = null){
         $this->custommer = $custommer;
         $this->status = $status;
         $this->commandData = $commandData;
@@ -94,8 +96,13 @@ class CheckoutResult {
         $this->httpResponse = $httpResponse;
     }
 
-
-    
+	public function getToken(){
+		return $this->token;
+	}
+	
+	public function setToken($token){
+		$this->token = $token;
+	}
 }
 
 

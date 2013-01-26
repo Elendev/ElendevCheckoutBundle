@@ -150,6 +150,7 @@ class PaypalCheckoutService extends CheckoutService {
         $token = $this->session->get("checkout.payment.token");
         
         $result = new CheckoutResult();
+        $result->setToken($token);
         
         $paypalService = new \PayPalAPIInterfaceServiceService();
         
@@ -157,9 +158,10 @@ class PaypalCheckoutService extends CheckoutService {
         if(!$token){
             //$response = $this->setExpressCheckoutRequest($command);
             try{
-            	$response = $paypalService->SetExpressCheckout($this->getSetExpressCheckoutRequest($command), $this->getAPICredentials());
+            	$response = $this->setExpressCheckout($command);
             	
             	$result->setCommandData($response);
+            	$result->setToken($response->Token);
             	
             	if($response->Ack =='Success'){
             		$this->session->set("checkout.payment.token", $response->Token);
@@ -189,11 +191,11 @@ class PaypalCheckoutService extends CheckoutService {
                 $ecPayment = null;
                 
                 try{
-                	$ecDetails = $paypalService->GetExpressCheckoutDetails($this->getGetExpressCheckoutDetail($token), $this->getAPICredentials());
+                	$ecDetails = $this->getExpressCheckoutDetails($token);
                 	
                 	if($ecDetails->Ack == 'Success'){
                 		
-                		$ecPayment = $paypalService->DoExpressCheckoutPayment($this->getDoExpressCheckoutRequest($command, $ecDetails->GetExpressCheckoutDetailsResponseDetails), $this->getAPICredentials());
+                		$ecPayment = $this->doExpressCheckout($command, $ecDetails->GetExpressCheckoutDetailsResponseDetails);
                 		
                 		if($ecPayment->Ack == 'Success'){
                 			$paymentInfo = $ecPayment->DoExpressCheckoutPaymentResponseDetails->PaymentInfo;
@@ -242,9 +244,9 @@ class PaypalCheckoutService extends CheckoutService {
     /**
      * 
      * @param Command $command
-     * @return \SetExpressCheckoutReq
+     * @return \SetExpressCheckoutResponseType
      */
-    public function getSetExpressCheckoutRequest(Command $command){
+    public function setExpressCheckout(Command $command){
     	$ecReqDetail = new \SetExpressCheckoutRequestDetailsType();
     	
     	$ecReqDetail->PaymentDetails[0] = $this->getPaymentDetailType($command);
@@ -267,32 +269,37 @@ class PaypalCheckoutService extends CheckoutService {
     	$setECReqType->SetExpressCheckoutRequestDetails = $ecReqDetail;
     	$setECReq = new \SetExpressCheckoutReq();
     	$setECReq->SetExpressCheckoutRequest = $setECReqType;
+
+    	$paypalService = new \PayPalAPIInterfaceServiceService();
     	
-    	return $setECReq;
+    	return $paypalService->SetExpressCheckout($setECReq, $this->getAPICredentials());
     }
     
     /**
      * 
      * @param unknown $token
-     * @return \GetExpressCheckoutDetailsReq
+     * @return \GetExpressCheckoutDetailsResponseType
      */
-    public function getGetExpressCheckoutDetail($token){
+    public function getExpressCheckoutDetails($token){
     	
     	$ecReqType = new \GetExpressCheckoutDetailsRequestType();
     	$ecReqType->Token = $token;
+    	$ecReqType->DetailLevel = "ReturnAll";
     	
     	$ecReq = new \GetExpressCheckoutDetailsReq();
     	$ecReq->GetExpressCheckoutDetailsRequest = $ecReqType;
     	
-    	return $ecReq;
+    	$paypalService = new \PayPalAPIInterfaceServiceService();
+    	
+    	return $paypalService->GetExpressCheckoutDetails($ecReq, $this->getAPICredentials());
     }
     
     /**
      * 
      * @param Command $command
-     * return \DoExpressCheckoutPaymentReq
+     * return \DoExpressCheckoutPaymentResponseType
      */
-    public function getDoExpressCheckoutRequest(Command $command, \GetExpressCheckoutDetailsResponseDetailsType $ecDetails){
+    public function doExpressCheckout(Command $command, \GetExpressCheckoutDetailsResponseDetailsType $ecDetails){
     	$ecReqDetail = new \DoExpressCheckoutPaymentRequestDetailsType();
     	
     	$ecReqDetail->PayerID = $ecDetails->PayerInfo->PayerID;
@@ -305,7 +312,9 @@ class PaypalCheckoutService extends CheckoutService {
     	$ecReq = new \DoExpressCheckoutPaymentReq();
     	$ecReq->DoExpressCheckoutPaymentRequest = $ecReqType;
     	
-    	return $ecReq;
+    	$paypalService = new \PayPalAPIInterfaceServiceService();
+    	
+    	return $paypalService->DoExpressCheckoutPayment($ecReq, $this->getAPICredentials());
     }
     
     /**
@@ -313,7 +322,7 @@ class PaypalCheckoutService extends CheckoutService {
      * @param Command $command
      * @return \PaymentDetailsType
      */
-    public function getPaymentDetailType(Command $command){
+    private function getPaymentDetailType(Command $command){
     	$paymentDetail = new \PaymentDetailsType();
     	
     	$paymentDetail->ShipToAddress = $this->getAddressType($command->getCustommer());
@@ -330,7 +339,7 @@ class PaypalCheckoutService extends CheckoutService {
     		$paymentDetail->PaymentDetailsItem[] = $this->getItemDetail($item);
     	}
     	
-    	$paymentDetail->NotifyURL = $this->router->generate("elendev.checkout.paypal.ipn", array(), true);
+    	$paymentDetail->NotifyURL = $this->router->generate("elendev.checkout.paypal.ipn", array('command' => $command->getId()), true);
     	
     	return $paymentDetail;
     }
@@ -339,7 +348,7 @@ class PaypalCheckoutService extends CheckoutService {
      * @param Custommer $custommer
      * @return \AddressType
      */
-    public function getAddressType(Custommer $custommer){
+    private function getAddressType(Custommer $custommer){
     	$address = new \AddressType();
     	
     	$address->CityName = $custommer->getCity();
@@ -356,7 +365,7 @@ class PaypalCheckoutService extends CheckoutService {
     /**
      * @return \PaymentDetailsItemType
      */
-    public function getItemDetail(Item $item){
+    private function getItemDetail(Item $item){
     	$paypalItem = new \PaymentDetailsItemType();
     	
     	$amount = new \BasicAmountType();
@@ -366,6 +375,7 @@ class PaypalCheckoutService extends CheckoutService {
     	$paypalItem->Name = $item->getName();
     	$paypalItem->Description = $item->getDescription();
     	$paypalItem->Amount = $amount;
+    	$paypalItem->Quantity = $item->getQuantity();
     	
     	return $paypalItem;
     }
@@ -373,7 +383,7 @@ class PaypalCheckoutService extends CheckoutService {
     /**
      * @return \SellerDetailsType
      */
-    public function getSellerDetail(){
+    private function getSellerDetail(){
     	$sellerDetailType = new \SellerDetailsType();
     	
     	$sellerDetailType->PayPalAccountID = $this->payerId;
@@ -382,7 +392,7 @@ class PaypalCheckoutService extends CheckoutService {
     /**
      * @return \APICredentialsType
      */
-    public function getAPICredentials(){
+    private function getAPICredentials(){
     	$apiCredentials = new \PPSignatureCredential($this->username, $this->password, $this->signature);
     	
     	return $apiCredentials;

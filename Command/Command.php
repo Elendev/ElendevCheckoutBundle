@@ -25,6 +25,9 @@ namespace Elendev\CheckoutBundle\Command;
  */
 interface Command {
     //put your code here
+    public function getId();
+	
+    public function getToken();
     
     public function getCustommer();
     
